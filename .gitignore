@@ -1,0 +1,13 @@
+# Never in this repository: game data and anything made from it, the APK signing key, build output and logs.
+/data/
+/out/
+/build/
+/keystore/
+/cache/
+# boost is ~180 MB of headers: builds use the system's (CI installs it)
+/third_party/boost/
+*.log
+__pycache__/
+*.pyc
+# upstream git history of vendored libraries (kept locally, renamed so their files are tracked here)
+.git-upstream

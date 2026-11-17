@@ -1,0 +1,44 @@
+# Linux x86-64 build of BOZ64 (pc/unix.cmake). The game files are never here: packages ask for them on first start.
+name: linux
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools and libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config libboost-dev zlib1g-dev libegl-dev libgles-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libpulse-dev libasound2-dev \
+            libpipewire-0.3-dev libdbus-1-dev libudev-dev libdrm-dev libgbm-dev
+
+      - name: Configure
+        run: cmake -S pc -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build
+        run: cmake --build build
+
+      # With no game files it must start, log, and stop with the message that says where to put them.
+      - name: Start-up check
+        run: |
+          export BOZ64_HOME="$RUNNER_TEMP/boz64" SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+          set +e
+          ./build/boz64
+          code=$?
+          set -e
+          cat "$BOZ64_HOME/boz64.log"
+          test "$code" -eq 1
+          grep -q "needs the game files" "$BOZ64_HOME/boz64.log"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boz64-linux-x86_64
+          path: build/boz64

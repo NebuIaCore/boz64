@@ -1,0 +1,38 @@
+BOZ64 co-op: same Wi-Fi, VPN apps, and direct play
+=====================================================
+
+Starting a game (all ways below)
+  Every player opens CO-OP MULTIPLAYER > LOCAL WI-FI, picks the same map and presses Continue.
+  The first player to get there hosts; the others find that game and join it.
+
+Same Wi-Fi or home network
+  Nothing to set up.
+
+Radmin VPN, Hamachi, ZeroTier (VPNs that act like a home network)
+  Everyone joins the same VPN network, then plays as above. Nothing else to set up: the game looks for games on
+  every network the device is on, VPNs included.
+  Radmin VPN and Hamachi are PC only. ZeroTier also has a phone app; if a phone on ZeroTier doesn't find the game,
+  put the other player's ZeroTier address in peers.txt (below).
+
+Tailscale, WireGuard (VPNs that don't pass broadcasts)
+  One player writes the other's address (Tailscale: their 100.x.x.x address or machine name) in peers.txt.
+  Only one side needs it.
+
+Over the internet without a VPN
+  The host forwards UDP port 47710 and TCP port 47711 on their router to their device. The other players write the
+  host's public IP in peers.txt.
+
+peers.txt
+  PC:    next to boz64.exe (the game writes an example file there the first time it starts).
+  Phone: Android/data/com.activision.boz64/files/peers.txt. Copy it there from a PC over USB.
+  One address per line. Lines starting with # are ignored.
+
+Windows Firewall
+  When Windows asks about boz64.exe, tick both "Private" and "Public" networks. VPN adapters such as Radmin VPN
+  usually count as Public, so allowing only Private blocks VPN play.
+
+If a game isn't found
+  - Check that both devices can reach each other (for example, ping the other player's VPN address).
+  - Only one copy of the game per device can use UDP port 47710. A second copy on the same PC still finds games,
+    but others can't find a game it hosts unless they put this PC's address in peers.txt.
+  - boz64.log (next to boz64.exe) lists, under "lan:", the networks searched and the games found.

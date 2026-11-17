@@ -1,0 +1,44 @@
+BOZ64 PC: keyboard and mouse
+============================
+
+Menus
+  The mouse works like a finger: click to tap, drag to slide. Esc goes back.
+
+Zombies (laid out like Black Ops on PC)
+  W A S D or arrow keys   move
+  Mouse                   look
+  Left button             fire
+  Right button            aim down the sights (hold)
+  Shift                   sprint (hold)
+  C                       crouch
+  Ctrl                    go prone
+  C or Ctrl while sprinting   dolphin dive (as in Black Ops: you dive forward and land prone)
+  Space                   stand up
+  R                       reload
+  F                       use or buy (doors, wall weapons, perks, the mystery box)
+  V, E, middle button or the back side button   knife
+  G                       lethal grenade (hold to cook, let go to throw)
+  Q or 4                  tactical grenade (hold, let go to throw)
+  1, 2, mouse wheel or the front side button    switch weapon (the game only has "next weapon")
+  3 or B                  the weapon's other fire mode (for example its grenade launcher)
+  Esc                     pause menu
+
+  During play the mouse is locked, as in other PC shooters: the cursor is hidden and held in the middle of the
+  window, even through a stutter. It comes back right away in the pause menu (Esc), and when you switch to another
+  window (Alt+Tab). Clicking back into the game window doesn't fire.
+
+Dead Ops Arcade (as in the game's PC version)
+  W A S D                 move
+  Arrow keys              shoot in that direction
+  Left button (hold)      shoot toward the cursor (measured from the middle of the screen)
+  G, right button or mouse wheel   drop a bomb
+  Space                   speed boost
+  Esc                     pause menu
+
+Mouse speed
+  Set in boz64.cfg, in data\data\data\com.activision.boz\files next to boz64.exe (the game makes the file the first
+  time a setting is changed; you can add the lines yourself):
+    mouse_sensitivity=5   look speed, the same scale as Call of Duty on PC (default 5)
+    mouse_ads=60          look speed while aiming down the sights, in percent of the above (default 60)
+  The game picks up changes within a second, even during play. The game's own "invert look" option also applies to
+  the mouse.
