@@ -4,7 +4,7 @@
 #   1. it starts, logs, and stops with the message saying where the game files go (exit code 1);
 #   2. with debug_boz64_selftest=1 it opens a window, an OpenGL ES context and sound, and draws a frame (exit code 0),
 #      on Xvfb with Mesa's software renderer.
-# usage: test-package.sh deb|rpm|arch|tgz|appimage <folder holding the downloaded artifacts>
+# usage: test-package.sh deb|rpm|arch|tgz|appimage|bin <folder holding the downloaded artifacts, or the build folder>
 set -eu
 kind=$1
 art=$(cd "$2" && pwd)
@@ -13,11 +13,11 @@ pkg() { find "$art" -name "$1" | head -n 1; }
 if command -v apt-get >/dev/null; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -q
-    apt-get install -y -q --no-install-recommends xvfb libgl1-mesa-dri libegl1 libgles2 ca-certificates
+    apt-get install -y -q --no-install-recommends xvfb libgl1-mesa-dri libegl1 libgles2 ca-certificates gdb
 elif command -v dnf >/dev/null; then
-    dnf install -y -q xorg-x11-server-Xvfb mesa-dri-drivers mesa-libEGL mesa-libGLES findutils
+    dnf install -y -q xorg-x11-server-Xvfb mesa-dri-drivers mesa-libEGL mesa-libGLES findutils gdb
 elif command -v pacman >/dev/null; then
-    pacman -Syu --noconfirm --needed xorg-server-xvfb mesa libglvnd
+    pacman -Syu --noconfirm --needed xorg-server-xvfb mesa libglvnd gdb
 fi
 
 run=boz64
@@ -29,6 +29,7 @@ tgz)
     mkdir -p /opt/boz64 && tar -xzf "$(pkg '*.tar.gz')" -C /opt/boz64
     run=$(find /opt/boz64 -name boz64 -type f | head -n 1)
     ;;
+bin) run=$(find "$art" -maxdepth 1 -name boz64 -type f) ;;  # a build folder: its unstripped program, for backtraces
 appimage)
     run=$(pkg '*.AppImage')
     chmod +x "$run"
@@ -48,6 +49,10 @@ check() {  # check <name> <expected exit code> <text the log must hold> [env...]
     set -e
     echo "== $name: exit code $code; log:"
     cat "$home/boz64.log" || true
+    if [ "$code" -gt 128 ] && command -v gdb >/dev/null && [ "$kind" != appimage ]; then
+        echo "== $name: killed by signal $((code - 128)); where:"
+        env BOZ64_HOME="$home" SDL_AUDIODRIVER=dummy "$@" gdb -q -batch -ex run -ex bt -ex 'info registers rip'             -ex 'x/6i $pc-12' --args "$run" 2>&1 | tail -40
+    fi
     [ "$code" -eq "$want" ] && grep -q "$text" "$home/boz64.log" && echo "== $name: OK" && return 0
     echo "== $name: FAILED" >&2
     return 1

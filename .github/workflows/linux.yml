@@ -93,6 +93,9 @@ jobs:
         with:
           name: boz64-rpm
           path: build/*.rpm
+      # the same checks on the unstripped program, so a crash's backtrace has names (Fedora's newer Clang and SDL)
+      - name: Check the built program
+        run: sh pc/dist/test-package.sh bin build
 
   arch:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
@@ -115,22 +118,29 @@ jobs:
   flatpak:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-24.08
-      options: --privileged
+    # on the runner itself: the flatpak-github-actions container failed to update its runtimes (cross-device link)
     steps:
       - uses: actions/checkout@v4
-      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+      - name: Build the Flatpak
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q flatpak flatpak-builder xvfb
+          # Ubuntu 24.04 keeps unprivileged user namespaces from bubblewrap by default
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak-builder --user --install-deps-from=flathub --force-clean --disable-rofiles-fuse --repo=repo \
+            flatpak-build pc/dist/flatpak/io.github.nebuiacore.BOZ64.yml
+          flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo repo BOZ64.flatpak \
+            io.github.nebuiacore.BOZ64
+      - uses: actions/upload-artifact@v4
         with:
-          bundle: BOZ64.flatpak
-          manifest-path: pc/dist/flatpak/io.github.nebuiacore.BOZ64.yml
-          cache-key: flatpak-builder-${{ github.sha }}
+          name: boz64-flatpak
+          path: BOZ64.flatpak
       # installed from the bundle as a user would, then the same two checks as pc/dist/test-package.sh
       - name: Test the Flatpak
         run: |
           app=io.github.nebuiacore.BOZ64
           log="$HOME/.var/app/$app/data/BOZ64/boz64.log"
-          flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak --user install -y --noninteractive BOZ64.flatpak
           set +e
           flatpak run --env=SDL_VIDEODRIVER=dummy --env=SDL_AUDIODRIVER=dummy $app
