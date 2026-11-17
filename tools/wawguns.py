@@ -111,8 +111,13 @@ FLAME_SOUNDS = (0xae363ff4, 0x7629b1ba)  # ignition, flame
 # 'projectile_wunderwaffe_trail_dummy_bullet' from each zombie to the next (0x02583188) and kills them one by one: both
 # are Call of the Dead's (its projectile group) too, so they go with the bolt (CHAIN), or the bolt kills only the zombie it
 # hits. (They name nothing else: the dummy bullet's trail material and smoke are the bolt's.)
+# Experiment (2026-11-17): Call of the Dead's Wunderwaffe is Black Ops' Lightning Bolt power-up gun (CPickupLightningBolt
+# gives it; no mystery box has it), and ours, from the box, acted like one: not kept in a slot, gone after a switch. Its
+# fire mode 17 (CWunderWaffeBehaviour) is the one power-up trait copied, so it fires with the Ray Gun's projectile mode
+# (behaviour 9) instead; the chain lightning comes from the bolt's explosion, not the fire mode. (Mode 17 also drew
+# the bulb glows.)
 WONDER = {'machines': 'wunderwaffe', 'spec': 'wunderwaffe', 'source': 'callofthedead', 'upgrade': 'self',
-          'damage': 'base', 'projectile': True}
+          'damage': 'base', 'projectile': True, 'behaviour': 9}
 CHAIN = ('chain_lightning', 'projectile_wunderwaffe_trail_dummy_bullet')
 # World at War's Wunderwaffe (0x1d9f2c, 0x148ac0, 0x1da2b8) kills up to 10 zombies (normal and upgraded alike) within
 # a ball growing from the hit at 1600 mm/s for 1 s (upgraded 2000 mm/s for 1.5 s), each in sight of the nearest one
@@ -1321,7 +1326,9 @@ class Converter:
                 dmg.set_u32('m_limbDamage', int(round(near * sum(mult(i) for i in (1, 2, 4, 5)) / 4 * kb)))
                 w.set_sub('m_damage', dmg)
             # fire mode and rate
-            beh = w.get_u32('behaviour')
+            beh = cfg.get('behaviour', w.get_u32('behaviour'))
+            if beh != w.get_u32('behaviour'):
+                w.set_u32('behaviour', beh)
             if beh in (BEH_SEMI, BEH_AUTO):
                 beh = BEH_AUTO if own['x5e'] else BEH_SEMI
                 w.set_u32('behaviour', beh)
