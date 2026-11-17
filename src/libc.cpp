@@ -72,12 +72,14 @@ int fake_proc_fd(const std::string& text) {
 std::string HP(const char* p) { return p; }
 #endif
 
-#if defined(__GLIBC__) && !__GLIBC_PREREQ(2, 36)
+#ifdef __GLIBC__  // nested: __GLIBC_PREREQ doesn't exist elsewhere, and an #if can't name it (Android)
+#if !__GLIBC_PREREQ(2, 36)
 // glibc only has arc4random since 2.36 (a Linux PC build may run on an older one)
 u32 arc4random() {
     static thread_local std::mt19937 r{std::random_device{}()};
     return static_cast<u32>(r());
 }
+#endif
 #endif
 
 // ---- struct conversions (32-bit bionic layouts) ----
