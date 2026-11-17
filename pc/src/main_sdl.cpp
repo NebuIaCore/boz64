@@ -32,7 +32,7 @@
 #include "settings.h"
 
 extern u32 g_guest_vm;
-std::string g_libdir;  // folder holding the original 32-bit libraries (src/libc.cpp's dlopen looks there)
+extern std::string g_libdir;  // src/libc.cpp: folder holding the original 32-bit libraries
 void jni_push_frame();
 void jni_pop_frame();
 

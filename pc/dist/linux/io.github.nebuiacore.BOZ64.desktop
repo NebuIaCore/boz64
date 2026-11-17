@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=BOZ64
+GenericName=Zombies shooter
+Comment=Call of Duty: Black Ops Zombies on Linux (needs your own game files)
+Exec=boz64
+Icon=io.github.nebuiacore.BOZ64
+Terminal=false
+Categories=Game;ActionGame;
+StartupWMClass=io.github.nebuiacore.BOZ64

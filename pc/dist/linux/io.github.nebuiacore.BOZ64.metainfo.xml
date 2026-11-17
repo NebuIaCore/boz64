@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.nebuiacore.BOZ64</id>
+  <name>BOZ64</name>
+  <summary>Call of Duty: Black Ops Zombies on Linux</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description>
+    <p>
+      BOZ64 runs the mobile Call of Duty: Black Ops Zombies on a PC. The package holds the program only: on first start
+      it asks for the game files (the data folder of BOZ64 PC) and says where to copy them.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.nebuiacore.BOZ64.desktop</launchable>
+  <content_rating type="oars-1.1">
+    <content_attribute id="violence-realistic">intense</content_attribute>
+    <content_attribute id="violence-bloodshed">intense</content_attribute>
+  </content_rating>
+</component>

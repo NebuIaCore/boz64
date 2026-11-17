@@ -458,6 +458,7 @@ bool win_create(int width, int height) {
     SDL_SetHint(SDL_HINT_VIDEO_FORCE_EGL, "1");
     SDL_SetHint(SDL_HINT_OPENGL_ES_DRIVER, "1");
     SDL_SetHint(SDL_HINT_APP_NAME, "BOZ64");
+    SDL_SetHint(SDL_HINT_APP_ID, "io.github.nebuiacore.BOZ64");  // matches the .desktop file, for the window's icon
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS)) {
         LOGE("SDL could not start: %s", SDL_GetError());
         return false;
