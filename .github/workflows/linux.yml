@@ -125,6 +125,23 @@ jobs:
           bundle: BOZ64.flatpak
           manifest-path: pc/dist/flatpak/io.github.nebuiacore.BOZ64.yml
           cache-key: flatpak-builder-${{ github.sha }}
+      # installed from the bundle as a user would, then the same two checks as pc/dist/test-package.sh
+      - name: Test the Flatpak
+        run: |
+          app=io.github.nebuiacore.BOZ64
+          log="$HOME/.var/app/$app/data/BOZ64/boz64.log"
+          flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak --user install -y --noninteractive BOZ64.flatpak
+          set +e
+          flatpak run --env=SDL_VIDEODRIVER=dummy --env=SDL_AUDIODRIVER=dummy $app
+          code=$?
+          set -e
+          cat "$log"; test "$code" -eq 1; grep -q "needs the game files" "$log"
+          set +e
+          xvfb-run -a flatpak run --env=SDL_AUDIODRIVER=dummy --env=LIBGL_ALWAYS_SOFTWARE=1 --env=debug_boz64_selftest=1 $app
+          code=$?
+          set -e
+          cat "$log"; test "$code" -eq 0; grep -q "self-test: all work" "$log"
 
   snap:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
@@ -137,3 +154,45 @@ jobs:
         with:
           name: boz64-snap
           path: ${{ steps.snap.outputs.snap }}
+      # installed as a user would (--dangerous: not from the store), then the same two checks as test-package.sh
+      - name: Test the Snap
+        run: |
+          sudo snap install gnome-46-2404 mesa-2404 gtk-common-themes
+          sudo snap install --dangerous "${{ steps.snap.outputs.snap }}"
+          sudo apt-get install -y -q xvfb
+          log="$HOME/snap/boz64/current/.local/share/BOZ64/boz64.log"
+          set +e
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy /snap/bin/boz64
+          code=$?
+          set -e
+          cat "$log"; test "$code" -eq 1; grep -q "needs the game files" "$log"
+          set +e
+          SDL_AUDIODRIVER=dummy LIBGL_ALWAYS_SOFTWARE=1 debug_boz64_selftest=1 xvfb-run -a /snap/bin/boz64
+          code=$?
+          set -e
+          cat "$log"; test "$code" -eq 0; grep -q "self-test: all work" "$log"
+
+  # each package installed in a fresh copy of the systems it is for, then checked (pc/dist/test-package.sh)
+  test:
+    needs: [build, rpm, arch]
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    name: test ${{ matrix.kind }} on ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {kind: deb, image: 'ubuntu:24.04'}
+          - {kind: deb, image: 'debian:13'}
+          - {kind: tgz, image: 'ubuntu:24.04'}
+          - {kind: appimage, image: 'ubuntu:24.04'}
+          - {kind: appimage, image: 'fedora:latest'}
+          - {kind: rpm, image: 'fedora:latest'}
+          - {kind: arch, image: 'archlinux:latest'}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - run: sh pc/dist/test-package.sh ${{ matrix.kind }} artifacts

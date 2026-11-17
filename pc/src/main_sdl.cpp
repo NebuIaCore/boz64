@@ -12,6 +12,8 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#include <GLES2/gl2.h>
+
 #include <sys/stat.h>
 #include <sys/system_properties.h>
 #include <unistd.h>
@@ -86,6 +88,32 @@ int prop_int(const char* name, int def) {
     return __system_property_get(name, v) > 0 ? atoi(v) : def;
 }
 
+// debug.boz64.selftest=1: open the window, the OpenGL ES context and sound, draw one frame, and quit. Needs no game
+// files; the CI workflow runs it in every Linux package (pc/dist/test-package.sh). 0 means all of them work.
+int self_test() {
+    if (!win_create(640, 360)) {
+        LOGE("self-test: no window: %s", SDL_GetError());
+        return 2;
+    }
+    audio_open();
+    if (!egl_start(2, nullptr)) {
+        LOGE("self-test: no OpenGL ES context");
+        return 3;
+    }
+    glClearColor(0.1f, 0.2f, 0.3f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    egl_swap();
+    GLenum err = glGetError();
+    const char* audio = SDL_GetCurrentAudioDriver();
+    LOGI("self-test: window (%s), OpenGL ES (%s, error 0x%x) and sound (%s)", SDL_GetCurrentVideoDriver(),
+         glGetString(GL_RENDERER), err, audio ? audio : "none");
+    egl_stop();
+    if (err != GL_NO_ERROR) return 4;
+    if (!audio) return 5;
+    LOGI("self-test: all work");
+    return 0;
+}
+
 }  // namespace
 
 int main(int, char**) {
@@ -101,6 +129,11 @@ int main(int, char**) {
     if (__system_property_get("debug.boz64.trace", prop) > 0 && prop[0] == '1') g_trace = true;
     if (__system_property_get("debug.boz64.precise", prop) > 0 && prop[0] == '1') g_precise = true;
     LOGI("boz64 for %s starting; files in %s", SDL_GetPlatform(), boz_exe_dir());
+    if (__system_property_get("debug.boz64.selftest", prop) > 0 && prop[0] == '1') {
+        int r = self_test();
+        boz_log_flush();
+        _exit(r);
+    }
 
     g_libdir = boz_host_path(LIBS);
     for (const std::string& f : {g_libdir + "/libs3e_android.so", boz_host_path(APK), boz_host_path(OBB)}) {

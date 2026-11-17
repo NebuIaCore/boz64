@@ -37,6 +37,7 @@ modules:
   - name: boz64
     buildsystem: cmake-ninja
     subdir: pc
+    builddir: true  # dynarmic refuses in-source builds
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
       - -DBoost_INCLUDE_DIR=/app/include
