@@ -32,6 +32,9 @@ void save() {
     if (FILE* f = fopen(tmp.c_str(), "w")) {
         fprintf(f, "progress=%d\n", progress);
         fclose(f);
+#ifdef _WIN32
+        remove(path.c_str());  // Windows' rename does not replace an existing file
+#endif
         rename(tmp.c_str(), path.c_str());
         saved_progress = progress;
     }
