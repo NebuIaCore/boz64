@@ -67,7 +67,12 @@ std::mutex log_lock;
 FILE* log_file = nullptr;
 
 std::mutex prop_lock;
-std::unordered_map<std::string, std::string> props;
+// function-local: cpu.cpp reads a property during static initialisation, which may run before this file's
+// (Clang 23 builds did: an unbuilt map has no buckets, and find() divided by zero)
+std::unordered_map<std::string, std::string>& props() {
+    static std::unordered_map<std::string, std::string> m;
+    return m;
+}
 timespec props_time{};
 std::chrono::steady_clock::time_point props_checked{};
 
@@ -78,7 +83,7 @@ void load_props() {
     std::string path = home() + "/boz64.props";
     struct stat st{};
     if (stat(path.c_str(), &st) != 0) {
-        props.clear();
+        props().clear();
         props_time = {};
         return;
     }
@@ -89,7 +94,7 @@ void load_props() {
 #endif
     if (t.tv_sec == props_time.tv_sec && t.tv_nsec == props_time.tv_nsec) return;
     props_time = t;
-    props.clear();
+    props().clear();
     std::ifstream f(path);
     std::string line;
     auto trim = [](const std::string& s) {
@@ -100,7 +105,7 @@ void load_props() {
         line = trim(line);
         if (line.empty() || line[0] == '#') continue;
         size_t eq = line.find('=');
-        if (eq != std::string::npos) props[trim(line.substr(0, eq))] = trim(line.substr(eq + 1));
+        if (eq != std::string::npos) props()[trim(line.substr(0, eq))] = trim(line.substr(eq + 1));
     }
 }
 
@@ -163,8 +168,8 @@ extern "C" int __system_property_get(const char* name, char* value) {
     {
         std::lock_guard lk(prop_lock);
         load_props();
-        auto it = props.find(name);
-        if (it != props.end()) v = it->second;
+        auto it = props().find(name);
+        if (it != props().end()) v = it->second;
     }
     if (v.empty()) {
         std::string env = name;
