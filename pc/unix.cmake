@@ -87,6 +87,8 @@ if (NOT APPLE)
     install(FILES ${DIST}/${APP_ID}.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES ${DIST}/${APP_ID}.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
     install(FILES ${DIST}/boz64.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/192x192/apps RENAME ${APP_ID}.png)
+    # AppStream (software centres, the Flatpak build) only looks at the standard sizes; 128 is the one it wants
+    install(FILES ${DIST}/boz64-128.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps RENAME ${APP_ID}.png)
 endif()
 set(CPACK_PACKAGE_NAME boz64)
 set(CPACK_PACKAGE_VERSION ${BOZ64_VERSION})
@@ -100,5 +102,6 @@ set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
 set(CPACK_RPM_PACKAGE_LICENSE "Proprietary")
 set(CPACK_RPM_PACKAGE_GROUP "Amusements/Games")
 set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /usr/share/applications /usr/share/metainfo /usr/share/icons
-    /usr/share/icons/hicolor /usr/share/icons/hicolor/192x192 /usr/share/icons/hicolor/192x192/apps)
+    /usr/share/icons/hicolor /usr/share/icons/hicolor/192x192 /usr/share/icons/hicolor/192x192/apps
+    /usr/share/icons/hicolor/128x128 /usr/share/icons/hicolor/128x128/apps)
 include(CPack)
