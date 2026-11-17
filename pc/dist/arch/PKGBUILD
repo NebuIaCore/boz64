@@ -1,0 +1,22 @@
+# Arch Linux package of BOZ64, built from this source tree (makepkg in pc/dist/arch; ../.. is pc/) by the CI
+# workflow. It holds the program only: the first start says where to copy the game files.
+pkgname=boz64
+pkgver=2026.11.17
+pkgrel=1
+pkgdesc="Call of Duty: Black Ops Zombies on Linux (needs your own game files)"
+arch=('x86_64')
+url="https://github.com/NebuIaCore/boz64"
+license=('LicenseRef-proprietary')
+depends=('sdl3' 'zlib' 'libglvnd' 'gcc-libs' 'glibc')
+makedepends=('cmake' 'ninja' 'boost' 'clang')
+options=('!debug' '!lto')
+
+build() {
+  cmake -S "$startdir/../.." -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DBOZ_FETCH_SDL=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

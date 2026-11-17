@@ -77,3 +77,28 @@ target_compile_definitions(boz64 PRIVATE BOZ_PC _GNU_SOURCE _USE_MATH_DEFINES $<
 target_link_libraries(boz64 PRIVATE dynarmic ${BOZ_SDL} ZLIB::ZLIB ${BOZ_EGL} ${BOZ_GLES} Threads::Threads ${CMAKE_DL_LIBS})
 
 install(TARGETS boz64 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# ---- packages (.deb and .rpm through cpack; the CI workflow and pc/dist make the others) ----
+# None of them carry the game files: the first start says where to copy them.
+set(BOZ64_VERSION 2026.11.17)
+if (NOT APPLE)
+    set(DIST ${CMAKE_CURRENT_SOURCE_DIR}/dist/linux)
+    set(APP_ID io.github.nebuiacore.BOZ64)
+    install(FILES ${DIST}/${APP_ID}.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES ${DIST}/${APP_ID}.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+    install(FILES ${DIST}/boz64.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/192x192/apps RENAME ${APP_ID}.png)
+endif()
+set(CPACK_PACKAGE_NAME boz64)
+set(CPACK_PACKAGE_VERSION ${BOZ64_VERSION})
+set(CPACK_PACKAGE_CONTACT "NebuIaCore")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Call of Duty: Black Ops Zombies on Linux (needs your own game files)")
+set(CPACK_PACKAGING_INSTALL_PREFIX /usr)
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_PACKAGE_SECTION games)
+set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
+set(CPACK_RPM_PACKAGE_LICENSE "Proprietary")
+set(CPACK_RPM_PACKAGE_GROUP "Amusements/Games")
+set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /usr/share/applications /usr/share/metainfo /usr/share/icons
+    /usr/share/icons/hicolor /usr/share/icons/hicolor/192x192 /usr/share/icons/hicolor/192x192/apps)
+include(CPack)

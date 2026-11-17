@@ -1,0 +1,48 @@
+# Flatpak of BOZ64, built from this source tree by the CI workflow (flatpak-builder). It holds the program only; the
+# game files go in ~/.var/app/io.github.nebuiacore.BOZ64/data/BOZ64/data (the first start shows the path).
+app-id: io.github.nebuiacore.BOZ64
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.llvm18
+command: boz64
+finish-args:
+  - --share=ipc
+  - --share=network        # LAN and VPN co-op
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=all           # the GPU and controllers
+build-options:
+  append-path: /usr/lib/sdk/llvm18/bin
+  prepend-ld-library-path: /usr/lib/sdk/llvm18/lib
+  env:
+    CC: clang
+    CXX: clang++
+modules:
+  # dynarmic needs Boost's headers (icl, variant) to build; nothing of it is installed in the app
+  - name: boost-headers
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/include
+      - cp -r boost /app/include/
+    cleanup:
+      - '*'
+    sources:
+      - type: archive
+        url: https://archives.boost.io/release/1.86.0/source/boost_1_86_0.tar.bz2
+        sha256: 1bed88e40401b2cb7a1f76d4bab499e352fa4d0c5f31c0dbae64e24d34d7513b
+
+  - name: boz64
+    buildsystem: cmake-ninja
+    subdir: pc
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBoost_INCLUDE_DIR=/app/include
+    build-options:
+      build-args:
+        - --share=network  # SDL3 is downloaded and built in (pc/unix.cmake)
+    sources:
+      - type: dir
+        path: ../../..

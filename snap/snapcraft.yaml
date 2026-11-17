@@ -1,0 +1,63 @@
+# Snap of BOZ64, built from this source tree by the CI workflow. It holds the program only; the game files go in
+# ~/snap/boz64/current/.local/share/BOZ64/data (the first start shows the path). Install with --dangerous.
+name: boz64
+base: core24
+version: '2026.11.17'
+summary: Call of Duty Black Ops Zombies on Linux
+description: |
+  Runs the mobile Call of Duty: Black Ops Zombies on a PC. The snap holds the program only: on first start it asks
+  for the game files (the data folder of BOZ64 PC) and says where to copy them.
+grade: devel
+confinement: strict
+
+apps:
+  boz64:
+    command: usr/bin/boz64
+    desktop: usr/share/applications/io.github.nebuiacore.BOZ64.desktop
+    extensions: [gnome]
+    plugs: [opengl, audio-playback, wayland, x11, network, network-bind, joystick, home]
+
+parts:
+  boz64:
+    plugin: cmake
+    source: .
+    source-subdir: pc
+    cmake-generator: Ninja
+    cmake-parameters:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DCMAKE_C_COMPILER=clang
+      - -DCMAKE_CXX_COMPILER=clang++
+    build-packages:
+      - clang
+      - ninja-build
+      - pkg-config
+      - libboost-dev
+      - zlib1g-dev
+      - libegl-dev
+      - libgles-dev
+      - libx11-dev
+      - libxext-dev
+      - libxrandr-dev
+      - libxcursor-dev
+      - libxfixes-dev
+      - libxi-dev
+      - libxss-dev
+      - libxkbcommon-dev
+      - libwayland-dev
+      - wayland-protocols
+      - libdecor-0-dev
+      - libpulse-dev
+      - libasound2-dev
+      - libpipewire-0.3-dev
+      - libdbus-1-dev
+      - libudev-dev
+    stage-packages:
+      - libegl1
+      - libgles2
+      - zlib1g
+    override-prime: |
+      craftctl default
+      # the desktop file's icon, by path (snaps don't see the hicolor theme)
+      sed -i 's|^Icon=.*|Icon=${SNAP}/usr/share/icons/hicolor/192x192/apps/io.github.nebuiacore.BOZ64.png|' \
+        usr/share/applications/io.github.nebuiacore.BOZ64.desktop
