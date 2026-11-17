@@ -174,7 +174,10 @@ float display_refresh(u64 t) {
             static jmethodID m = e->GetStaticMethodID(g_ui_class, "refreshRate", "()F");
             float r = m ? e->CallStaticFloatMethod(g_ui_class, m) : 0;
             if (e->ExceptionCheck()) e->ExceptionClear();
-            else if (r > 1) refresh_hz = r;
+            else if (r > 1) {
+                if (r > refresh_hz + 0.5f || r < refresh_hz - 0.5f) LOGI("display refresh rate %.0f Hz", r);
+                refresh_hz = r;
+            }
         }
     }
     return refresh_hz > 1 ? refresh_hz : 60;

@@ -1,6 +1,7 @@
 // Window setup for the 64-bit port, added to the APK as a second dex file. The native wrapper calls
 // install() from JNI_OnLoad; from then on every activity of the game is shown full screen: drawn under the
-// camera cutout, with the status and navigation bars hidden (a swipe from the edge shows them briefly).
+// camera cutout, with the status and navigation bars hidden (a swipe from the edge shows them briefly), at the
+// display's fastest refresh rate.
 // It also starts the sound watchdog (Sound.java) once the game's loader activity exists, and while the game is in
 // front it holds a Wi-Fi multicast lock, so the LAN game announcements (broadcasts, see src/lan.cpp) get through.
 package boz64;
@@ -10,6 +11,7 @@ import android.app.Application;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.Display;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
@@ -70,15 +72,36 @@ public final class Ui implements Application.ActivityLifecycleCallbacks {
     private static void apply(Activity a) {
         Window w = a.getWindow();
         if (w == null) return;
+        WindowManager.LayoutParams lp = w.getAttributes();
+        boolean changed = false;
         if (Build.VERSION.SDK_INT >= 28) {
-            WindowManager.LayoutParams lp = w.getAttributes();
             int mode = Build.VERSION.SDK_INT >= 30 ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
                     : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
             if (lp.layoutInDisplayCutoutMode != mode) {
                 lp.layoutInDisplayCutoutMode = mode;
-                w.setAttributes(lp);
+                changed = true;
             }
         }
+        // The display's fastest refresh rate at the current resolution, as the PC version runs at its monitor's: left
+        // alone, Android shows the game at 60 Hz (on the S22 Ultra, out of 120).
+        if (Build.VERSION.SDK_INT >= 23) {
+            try {
+                Display d = a.getWindowManager().getDefaultDisplay();
+                Display.Mode cur = d.getMode(), best = cur;
+                for (Display.Mode m : d.getSupportedModes())
+                    if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight()
+                            && m.getRefreshRate() > best.getRefreshRate()) best = m;
+                if (lp.preferredDisplayModeId != best.getModeId()) {
+                    lp.preferredDisplayModeId = best.getModeId();
+                    changed = true;
+                    Log.i(TAG, "display: asked for " + best.getPhysicalWidth() + "x" + best.getPhysicalHeight() + " at "
+                            + best.getRefreshRate() + " Hz (now " + cur.getRefreshRate() + " Hz)");
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "display: could not ask for a refresh rate: " + t);
+            }
+        }
+        if (changed) w.setAttributes(lp);
         final View decor = w.getDecorView();
         decor.setSystemUiVisibility(IMMERSIVE);
         // the game's loader changes the flags on focus changes; put them back
