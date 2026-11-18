@@ -26,9 +26,16 @@ constexpr u16 HOOK_ORIG = 0xaa08;
 constexpr u32 HOOK_BULLET_HIT = 0xbc;
 constexpr u32 SP_GUN = 0x10, SP_DAMAGE = 0x24;
 bool paused = false;
+u32 forced = 0;  // a damage every hit carries meanwhile (src/flame.cpp's Wunderwaffe chain), or 0
+bool hooked = false;
 }  // namespace
 
 void doubletap_pause(bool p) { paused = p; }
+
+bool doubletap_force_damage(u32 damage) {
+    forced = damage;
+    return hooked;
+}
 
 void doubletap_set_image(u32 image_lo) {
     image = image_lo;
@@ -38,6 +45,7 @@ void doubletap_set_image(u32 image_lo) {
     }
     g::wr16(at(HOOK_AT), static_cast<u16>(0xdf00 | HOOK_BULLET_HIT));  // Thumb svc #imm8
     invalidate_code(at(HOOK_AT), 2);
+    hooked = true;
     LOGI("double tap: Double Tap II is on");
 }
 
@@ -49,6 +57,7 @@ bool doubletap_svc(GuestThread& t, u32 svc) {
     u32 gun = g::rd32(sp + SP_GUN);
     u32 wm = valid(gun) ? g::rd32(gun + GUN_WEAPONS) : 0;
     u32 pm = valid(wm) ? g::rd32(wm + WM_PERKS) : 0;
-    if (!paused && valid(pm) && (g::rd32(pm + PM_BITS) & DOUBLE_TAP)) g::wr32(sp + SP_DAMAGE, g::rd32(sp + SP_DAMAGE) * 2);
+    if (forced) g::wr32(sp + SP_DAMAGE, forced);
+    else if (!paused && valid(pm) && (g::rd32(pm + PM_BITS) & DOUBLE_TAP)) g::wr32(sp + SP_DAMAGE, g::rd32(sp + SP_DAMAGE) * 2);
     return true;
 }

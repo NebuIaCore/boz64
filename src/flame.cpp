@@ -48,7 +48,9 @@
 //    helper (FUN_0265246c, the Death Machine's). Black Ops would play a gun's fire sound with every shot (4 a second
 //    here, each 6 s long: they piled up) and the Pack-a-Punch shot after it, so tools/wawguns.py gives the
 //    flamethrower neither.
-// Settings (boz64.props): debug.boz64.flamethrower=0 turns all of this off; debug.boz64.flame_range (metres, World at
+// Also here (it shares the sphere query, the ray and the bullet hit): the Wunderwaffe's chain lightning as Black Ops
+// (2010) runs it, see "the Wunderwaffe's chain lightning" below; debug.boz64.tesla=0 leaves the game's own chain.
+// Settings (boz64.props): debug.boz64.flamethrower=0 turns the flamethrower part off; debug.boz64.flame_range (metres, World at
 // War's 2.8), debug.boz64.flame_size (how big it is drawn, 1.0) and debug.boz64.flame_nozzle (where it starts on the
 // screen: centimetres forward, right, up of the eye, "28,7,-9").
 #include "flame.h"
@@ -361,6 +363,279 @@ void damage(u32 gun) {
         call(FN_HIT, {gun, refs[k], 0, pos, nrm, 1, 0});
     }
     doubletap_pause(false);
+}
+
+// ---- the Wunderwaffe's chain lightning, as Black Ops (2010) runs it (game thread) ----
+// Black Ops' tesla (maps/_zombiemode_weap_tesla.gsc): the first zombie the bolt hurts is arc 1. From each zombie hit at
+// arc n, every zombie not yet hit within 300 - 20 n inches of its head and in sight of it (characters looked past) is hit
+// at arc n + 1, depth first, nearest (to the first zombie) first, until arc 5 or 20 zombies. Each search waits a
+// network frame (50 ms); a zombie at arc n > 1 dies 0.2-0.6 s x n later, after its arc (a bolt flying 0.5 s from the
+// zombie before it; none when they are within 128 inches of each other), at most 5 deaths a 100 ms, each
+// DoDamage(health + 666) from the player: their kill, with its points and power-up drop chance.
+// Black Ops (mobile) has one chain lightning instead (CExplosion, 0x025da08e, spawns "chain_lightning": up to 10 jumps
+// from zombie to zombie, each within CChainLightning m_jumpRange), which kills by a message: no kill for the player, so
+// no points and only the bare 2 % drop chance (the drops also come from points: CPickupManager, 0x0262a2d4). While the
+// local player holds a Wunderwaffe (Call of the Dead's DG-2 or World at War's), that spawn is skipped and the tesla
+// above runs, on the next update: zombies, hellhounds and space monkeys found with the Thundergun's sphere query, sight
+// from the bullets' ray, each kill the gun's own bullet hit with its damage made health + 666 (doubletap.cpp), each arc
+// drawn with the chain's own trail (fired from 'player_weapon' as CChainLightning fires it, 0x02583188, timed to land in
+// 0.5 s). A bolt that hurts George Romero spawns the game's chain as before (his reaction to it is the game's own).
+constexpr u32 CHAIN_HOOK_AT = 0x025da08c;  // CExplosion: "adds r3, #0x98" (r4 = the explosion) before the spawn
+constexpr u16 CHAIN_HOOK_ORIG = 0x3398;
+constexpr u32 CHAIN_SKIP = 0x025d9f72;     // where a failed spawn goes on (the area damage)
+constexpr u32 HOOK_CHAIN = 0xc0;
+constexpr u32 EXPL_RADIUS = 0x40, EXPL_TRANSFORM = 0x6c;  // CExplosion
+constexpr u32 FN_TABLE_GET = 0x024a89e8 | 1;    // (component table, entity id): the entity's component, or 0
+constexpr u32 FN_BY_ID = 0x025171c0 | 1;        // (entity id, the hash of its name): the entity, or 0
+constexpr u32 FN_TRANSFORM_OF = 0x0251c094 | 1; // (entity): its CIsTransform
+constexpr u32 FN_HEALTH_OF = 0x025f2bc4 | 1;    // (entity): its CHealth
+constexpr u32 FN_LOOK_AT = 0x02512f7a | 1;      // (out matrix: 3 rows (the third forward) + position, &from, &to, &up)
+constexpr u32 FN_PROJ_IDS = 0x025e5e70 | 1;     // (): +0xd4 plus +0xd8 (counted up) names the next projectile
+constexpr u32 FN_LAUNCHER_OF = 0x02676d54 | 1;  // (entity): its projectile launcher
+constexpr u32 FN_FIRE = 0x0267a350 | 1;         // (launcher, spec hash, &matrix, &velocity, -1, projectile id)
+constexpr u32 GOT_UP = 0x0286b79c;              // -> (0, 1, 0): y is up
+constexpr u32 TABLE_ZOMBIE = 0x028ba968, TABLE_HELLHOUND = 0x028ba264, TABLE_MONKEY = 0x028ba4c8;  // AI components
+constexpr u32 TABLE_ROMERO = 0x028ba654;
+constexpr u32 HEALTH = 0x48;  // CHealth: health (float)
+constexpr Check TESLA_CHECKS[] = {
+    {FN_TABLE_GET, 0xab02b513}, {FN_BY_ID, 0xb5134b07}, {FN_TRANSFORM_OF, 0x4603b508}, {FN_HEALTH_OF, 0x4603b508},
+    {FN_LOOK_AT, 0xedd2b570}, {FN_PROJ_IDS, 0x4a034b02}, {FN_LAUNCHER_OF, 0x4603b508}, {FN_FIRE, 0x461cb530},
+};
+// Black Ops' zombie_vars, inches as centimetres
+constexpr float INCH = 2.54f;
+constexpr int MAX_ARCS = 5, MAX_KILLS = 20, CHOKE = 4;  // tesla_max_arcs, _max_enemies_killed, _network_death_choke
+constexpr float RADIUS_START = 300 * INCH, RADIUS_DECAY = 20 * INCH, MIN_FX = 128 * INCH;
+constexpr float ARC_MS = 500, FRAME_MS = 50;  // tesla_arc_travel_time; a network frame
+constexpr float REACH = (4 * RADIUS_START - 10 * RADIUS_DECAY) * 1.02f;  // arcs 1-4 end to end: all a chain can reach
+constexpr float HEAD = 140, TRAIL = 100, BODY = 30;  // cm: its head above its feet, where the arcs fly; its girth
+const u32 HASH_TRAIL = djb2("projectile_wunderwaffe_trail_dummy_bullet"), HASH_LAUNCHER = djb2("player_weapon");
+const u32 WONDER[] = {djb2("wunderwaffe"), djb2("waw_wunderwaffe"), djb2("waw_wunderwaffe_upgrade")};
+
+bool tesla_on = false;
+u32 tb = 0;  // guest memory: from, to (16 each), matrix (48), velocity
+u32 ww_gun = 0, ww_cur = 0, ww_hol = 0;  // the local player's Wunderwaffe in hand (0: none), current and holstered guns
+u64 ww_seen = 0;
+struct Start { V3 pos; float radius; u32 gun; };
+std::vector<Start> starts;  // bolts gone off since the last update
+struct Zap {
+    u64 at;
+    bool kill;          // its death (else its arc)
+    u32 ref, id, gun;   // the zombie (and its id, to tell it is still there); the gun it dies to
+    V3 pos;             // where it was
+    u32 src, src_id;    // the zombie the arc comes from (0: the bolt)
+    V3 src_pos;
+};
+std::vector<Zap> zaps;     // pending, soonest not first
+std::vector<u32> doomed;   // zombies a chain has hit and not killed yet (zombie_tesla_hit): no other chain takes them
+u64 choke_from = 0;
+int choked = 0;
+u32 zap_seed = 1;
+
+float rnd01() {  // xorshift32
+    zap_seed ^= zap_seed << 13, zap_seed ^= zap_seed >> 17, zap_seed ^= zap_seed << 5;
+    return (zap_seed >> 8) / 16777216.0f;
+}
+
+bool is_wonder(u32 gun) {
+    if (!valid(gun)) return false;
+    u32 h = g::rd32(gun + GUN_HASH);
+    return std::find(std::begin(WONDER), std::end(WONDER), h) != std::end(WONDER);
+}
+
+bool has(u32 table, u32 ref) { return call(FN_TABLE_GET, {at(table), g::rd32(ref + 4)}) != 0; }
+
+// a reference kept from an earlier update, if its entity is still there
+u32 still(u32 ref, u32 id) { return valid(ref) && g::rd32(ref + 4) == id && call(FN_REF_GET, {ref}) ? ref : 0; }
+
+V3 position(u32 ref, V3 old) {
+    u32 tr = ref ? call(FN_TRANSFORM_OF, {ref}) : 0;
+    if (!valid(tr)) return old;
+    call(FN_TRANSFORM_UPDATE, {tr});
+    return rdv(tr + TR_POS);
+}
+
+float health(u32 ref) {
+    u32 h = call(FN_HEALTH_OF, {ref});
+    return valid(h) ? g::rdf(h + HEALTH) : 0;
+}
+
+bool in_sight(V3 a, V3 b) {
+    float d = len(b - a);
+    return d < 1 || wall_distance(a, (b - a) * (1 / d), d) >= d - 1;
+}
+
+// the bolt has gone off (inside CExplosion): the tesla instead of the game's chain?
+void tesla_hook(std::array<u32, 16>& r) {
+    r[3] += 0x98;  // the replaced "adds r3, #0x98"
+    if (!tesla_on || !ww_gun) return;
+    u32 tr = g::rd32(r[4] + EXPL_TRANSFORM);
+    if (!valid(tr)) return;
+    call(FN_TRANSFORM_UPDATE, {tr});
+    Start s{rdv(tr + TR_POS), g::rdf(r[4] + EXPL_RADIUS), ww_gun};
+    u32 refs[32];
+    int n = query(s.pos, s.radius + BODY, refs, 32, 0);
+    for (int k = 0; k < n; k++)
+        if (valid(refs[k]) && has(TABLE_ROMERO, refs[k])) return;  // George: the game's chain
+    starts.push_back(s);
+    r[15] = at(CHAIN_SKIP);
+}
+
+void tesla_build(const Start& s, u64 now) {
+    struct C { u32 ref, id; V3 pos, head; bool hit; };
+    std::vector<C> c;
+    u32 refs[64];
+    int n = query(s.pos, REACH + s.radius + BODY, refs, 64, 0);
+    for (int k = 0; k < n; k++) {
+        u32 ref = refs[k];
+        if (!valid(ref)) continue;
+        u32 id = g::rd32(ref + 4);
+        if (!(has(TABLE_ZOMBIE, ref) || has(TABLE_HELLHOUND, ref) || has(TABLE_MONKEY, ref))) continue;
+        if (health(ref) < 0.5f || std::find(doomed.begin(), doomed.end(), id) != doomed.end()) continue;
+        V3 p = position(ref, {});
+        c.push_back({ref, id, p, p + V3{0, HEAD, 0}, false});
+    }
+    // arc 1: the one the bolt hurts (its explosion's reach, from the feet to the top of the head), nearest first
+    int first = -1;
+    float best = s.radius + BODY;
+    for (int i = 0; i < static_cast<int>(c.size()); i++) {
+        V3 q = c[i].pos + V3{0, std::clamp(s.pos.y - c[i].pos.y, 0.0f, HEAD + 40), 0};
+        float d = len(s.pos - q);
+        if (d <= best) best = d, first = i;
+    }
+    if (first < 0) return;
+    // get_array_of_closest(the first zombie's head)
+    std::vector<int> order(c.size());
+    for (size_t i = 0; i < c.size(); i++) order[i] = static_cast<int>(i);
+    V3 o = c[first].head;
+    std::sort(order.begin(), order.end(), [&](int a, int b) { return len(c[a].head - o) < len(c[b].head - o); });
+
+    int hits = 1, visits = 0;
+    auto schedule = [&](int i, int arc, int src, u64 t) {
+        u64 at = t + (arc > 1 ? static_cast<u64>((0.2f + 0.4f * rnd01()) * arc * 1000) * MS : 0);
+        Zap z{at, false, c[i].ref, c[i].id, s.gun, c[i].pos, 0, 0, s.pos};
+        if (src >= 0) z.src = c[src].ref, z.src_id = c[src].id, z.src_pos = c[src].pos;
+        if (src >= 0 && len(c[i].pos - c[src].pos) >= MIN_FX) {
+            zaps.push_back(z);
+            z.at += static_cast<u64>(ARC_MS) * MS;
+        }
+        z.kill = true;
+        zaps.push_back(z);
+        doomed.push_back(c[i].id);
+    };
+    // tesla_arc_damage (recursive, depth first)
+    auto visit = [&](auto& self, int i, int arc, int src) -> void {
+        u64 t = now + static_cast<u64>(visits++ * FRAME_MS) * MS;
+        float radius = RADIUS_START - RADIUS_DECAY * arc;
+        std::vector<int> found;
+        for (int j : order)
+            if (!c[j].hit && len(c[j].head - c[i].head) <= radius && in_sight(c[i].head, c[j].head))
+                c[j].hit = true, found.push_back(j);
+        schedule(i, arc, src, t);
+        for (int j : found) {
+            if (arc + 1 >= MAX_ARCS || hits >= MAX_KILLS) {
+                c[j].hit = false;
+                continue;
+            }
+            hits++;
+            self(self, j, arc + 1, i);
+        }
+    };
+    c[first].hit = true;
+    visit(visit, first, 1, -1);
+    LOGI("wunderwaffe: chain of %d (%d in reach)", hits, static_cast<int>(c.size()));
+}
+
+// an arc: the chain's trail from the zombie before to this one, landing in ARC_MS
+void tesla_arc(const Zap& z) {
+    V3 a = position(still(z.src, z.src_id), z.src_pos) + V3{0, TRAIL, 0};
+    V3 b = position(still(z.ref, z.id), z.pos) + V3{0, TRAIL, 0};
+    float d = len(b - a);
+    if (d < 1) return;
+    u32 from = tb, to = tb + 16, mat = tb + 32, vel = tb + 80;
+    wrv(from, a), wrv(to, b);
+    call(FN_LOOK_AT, {mat, from, to, g::rd32(at(GOT_UP))});
+    g::wrf(mat + 36, a.x), g::wrf(mat + 40, a.y), g::wrf(mat + 44, a.z);
+    wrv(vel, norm(rdv(mat + 24)) * (d / (ARC_MS / 1000)));
+    u32 ids = call(FN_PROJ_IDS);
+    if (!valid(ids)) return;
+    u32 k = g::rd32(ids + 0xd8);
+    g::wr32(ids + 0xd8, k + 1);
+    u32 pw = call(FN_BY_ID, {HASH_LAUNCHER});
+    u32 launcher = valid(pw) ? call(FN_LAUNCHER_OF, {pw}) : 0;
+    if (valid(launcher)) call(FN_FIRE, {launcher, HASH_TRAIL, mat, vel, 0xffffffffu, g::rd32(ids + 0xd4) + k});
+}
+
+// a death (tesla_do_damage): false if it was not dealt
+bool tesla_kill(const Zap& z) {
+    doomed.erase(std::remove(doomed.begin(), doomed.end(), z.id), doomed.end());
+    u32 ref = still(z.ref, z.id);
+    float hp = ref ? health(ref) : 0;
+    if (hp < 0.5f) return false;  // "guy died on us"
+    u32 gun = z.gun == ww_cur || z.gun == ww_hol ? z.gun : ww_cur;  // (a gun since put away: the one in hand)
+    if (!valid(gun)) return false;
+    V3 p = position(ref, z.pos) + V3{0, TRAIL, 0};
+    V3 dir = norm(p - (z.src_pos + V3{0, TRAIL, 0}));
+    u32 pos = buf + 224, nrm = buf + 240;
+    wrv(pos, p), wrv(nrm, len(dir) > 0.5f ? dir * -1.0f : V3{0, 1, 0});
+    doubletap_force_damage(static_cast<u32>(hp) + 666);
+    call(FN_HIT, {gun, ref, 0, pos, nrm, 1, 0});
+    doubletap_force_damage(0);
+    return true;
+}
+
+void tesla_update(u32 ctl) {
+    if (!tesla_on) return;
+    u64 now = now_ns();
+    if (ww_seen && now - ww_seen > AWAY)  // paused (or another map: kept references are checked before use)
+        for (Zap& z : zaps) z.at += now - ww_seen;
+    ww_seen = now;
+    u32 wm = g::rd32(ctl + CTL_WEAPONS);
+    ww_cur = valid(wm) ? g::rd32(wm + WM_SLOTS) : 0, ww_hol = valid(wm) ? g::rd32(wm + WM_SLOTS + 4) : 0;
+    ww_gun = is_wonder(ww_cur) ? ww_cur : 0;
+    for (const Start& s : starts) tesla_build(s, now);
+    starts.clear();
+    if (now - choke_from >= static_cast<u64>(2 * FRAME_MS) * MS) choke_from = now, choked = 0;
+    for (size_t i = 0; i < zaps.size();) {
+        if (zaps[i].at > now || (zaps[i].kill && choked > CHOKE)) {
+            i++;
+            continue;
+        }
+        Zap z = zaps[i];
+        zaps.erase(zaps.begin() + static_cast<std::ptrdiff_t>(i));
+        if (!z.kill) tesla_arc(z);
+        else if (tesla_kill(z)) choked++;
+    }
+    if (zaps.empty()) doomed.clear();
+}
+
+void tesla_init() {
+    char v[PROP_VALUE_MAX] = {};
+    if (__system_property_get("debug.boz64.tesla", v) > 0 && v[0] == '0') {
+        LOGI("wunderwaffe: Black Ops' chain is off (debug.boz64.tesla=0)");
+        return;
+    }
+    for (const Check& c : TESLA_CHECKS) {
+        if (g::rd32(at(c.fn & ~1u)) != c.word) {
+            LOGW("wunderwaffe: unexpected code at 0x%08x; the game's own chain stays", c.fn & ~1u);
+            return;
+        }
+    }
+    if (g::rd16(at(CHAIN_HOOK_AT)) != CHAIN_HOOK_ORIG) {
+        LOGW("wunderwaffe: unexpected code at 0x%08x; the game's own chain stays", CHAIN_HOOK_AT);
+        return;
+    }
+    if (!doubletap_force_damage(0)) {
+        LOGW("wunderwaffe: the bullet hit hook (doubletap.cpp) is off; the game's own chain stays");
+        return;
+    }
+    tb = g::data_alloc(96, 16);
+    if (!tb) return;
+    zap_seed = static_cast<u32>(now_ns()) | 1;
+    g::wr16(at(CHAIN_HOOK_AT), static_cast<u16>(0xdf00 | HOOK_CHAIN));  // Thumb svc #imm8
+    invalidate_code(at(CHAIN_HOOK_AT), 2);
+    tesla_on = true;
+    LOGI("wunderwaffe: Black Ops' chain is on (%d arcs, %d kills, %.0f cm less %.0f cm an arc)", MAX_ARCS, MAX_KILLS,
+         RADIUS_START, RADIUS_DECAY);
 }
 
 // ---- the sound (game thread): World at War's fire state plays the ignition and the flame as the trigger is pulled
@@ -1173,24 +1448,26 @@ float prop_float(const char* name, float def, float lo, float hi) {
 
 void flame_set_image(u32 image_lo) {
     image = image_lo;
+    for (const Check& c : CHECKS) {
+        if (g::rd32(at(c.fn & ~1u)) != c.word) {
+            LOGW("flamethrower: unexpected code at 0x%08x; World at War's heat, flame and gauge (and the Wunderwaffe's "
+                 "Black Ops chain) are off", c.fn & ~1u);
+            return;
+        }
+    }
+    buf = g::data_alloc(BUF_SIZE, 16);
+    if (!buf) return;
+    for (u32 i = 0; i < BUF_SIZE; i += 4) g::wr32(buf + i, 0);
+    tesla_init();
     char v[PROP_VALUE_MAX] = {};
     if (__system_property_get("debug.boz64.flamethrower", v) > 0 && v[0] == '0') {
         LOGI("flamethrower: World at War's heat, flame and gauge are off (debug.boz64.flamethrower=0)");
         return;
     }
-    for (const Check& c : CHECKS) {
-        if (g::rd32(at(c.fn & ~1u)) != c.word) {
-            LOGW("flamethrower: unexpected code at 0x%08x; World at War's heat, flame and gauge are off", c.fn & ~1u);
-            return;
-        }
-    }
     if (g::rd16(at(SHOT_HOOK_AT)) != SHOT_HOOK_ORIG) {
         LOGW("flamethrower: unexpected code at 0x%08x; World at War's heat, flame and gauge are off", SHOT_HOOK_AT);
         return;
     }
-    buf = g::data_alloc(BUF_SIZE, 16);
-    if (!buf) return;
-    for (u32 i = 0; i < BUF_SIZE; i += 4) g::wr32(buf + i, 0);
     snd_ignite = buf + BUF_SOUNDS, snd_flame = buf + BUF_SOUNDS + 32;
     hash_ignite = djb2("waw_snd_ae363ff4");  // tools/wawguns.py FLAME_SOUNDS, as it names them
     hash_flame = djb2("waw_snd_7629b1ba");
@@ -1211,6 +1488,10 @@ void flame_set_image(u32 image_lo) {
 }
 
 bool flame_svc(GuestThread& t, u32 svc) {
+    if (svc == HOOK_CHAIN) {
+        tesla_hook(t.regs());
+        return true;
+    }
     if (svc != HOOK_SHOT) return false;
     auto& r = t.regs();
     r[1] = r[0];  // the replaced "mov r1, r0": bullets per shot
@@ -1222,7 +1503,9 @@ bool flame_svc(GuestThread& t, u32 svc) {
 }
 
 void flame_on_player(u32 ctl) {
-    if (!enabled || !valid(ctl)) return;
+    if (!valid(ctl)) return;
+    tesla_update(ctl);
+    if (!enabled) return;
     u64 now = now_ns();
     bool fresh = !last_update || now - last_update > AWAY;
     float dt = fresh ? 0.0f : std::min(MAX_DT, static_cast<float>(now - last_update) / 1e9f);
