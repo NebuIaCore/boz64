@@ -32,6 +32,7 @@
 #
 # usage: python tools/wawguns.py --check     converts and prints what would be added (no pack is written)
 import copy
+import json
 import hashlib
 import math
 import os
@@ -169,6 +170,15 @@ BO_FIRE, BO_AIM_FIRE = 0xb93eecb4, 0x0486908a     # the arms machine's fire stat
 BO_GUN_FIRE, BO_GUN_AIM_FIRE = gfx.djb2('shooting'), 0xa8c58e88  # the gun machine's
 F_RATE = gfx.djb2('autoROF')  # CPlayerWeapon's fire rate (rounds a minute: MP40 535, AK74u 750, G11 1250)
 RATE_REF = (535, 116)    # Black Ops' MP40: 535 a minute; World at War's MP40 fire state: 116 ms
+RATE_REF_PC = (535, 112)  # the same, World at War PC's MP40 iFireTime: 112 ms
+# World at War PC values (PC above: weapons.json) where there are some: clip and reserve, near / far damage and their
+# ranges (inches), fire rate (automatics: autoROF; semi-automatics: the fire states' length), and the reload lengths
+# (iReloadTime partial, iReloadEmptyTime empty; their sound sequences' delays scaled alike). World at War iOS's
+# animations are played faster or slower for that, by at most RETIME_MAX either way. Head multipliers stay iOS's
+# (PC's zombie heads are its scripts'); Pack-a-Punch damage is the normal gun's x PAP_BODY as before, or PC's
+# upgrade if higher.
+RETIME_MAX = 2.0
+RELOAD_STATE = {'longer reload': gfx.djb2('reloading'), 'shorter reload': 0x0467c906}  # EMPTY, PARTIAL
 # World at War's stats on Black Ops' scale, set by the MP40 both games have (Black Ops' is World at War's: damage
 # 100 / x4 head, clip 32 / 192):
 #   spread: World at War's (0x20ed80-0x20ef68) is the gun record's +0x94 x6: moving-hip and still-hip targets, ADS,
@@ -517,6 +527,96 @@ def regrip(anim_body, skel, delta):
         struct.pack_into('<3h', anim.blob, p, *[max(-32768, min(32767, int(round(c)))) for c in P])
         struct.pack_into('<4h', anim.blob, p + 6, *_matq(R, q))
     return anim.write()
+
+
+# ---- the sprint pose (World at War PC)
+# World at War PC has no sprint animations: its engine moves the gun, arms and all, by the weapon's vSprintOfs (inches
+# forward, side, up) and turns it by vSprintRot (degrees: pitch down, yaw left, roll) as the sprint comes in over
+# sprintInTime, bobs it by vSprintBob (horizontal, vertical) each sprintLoopTime and puts it back over sprintOutTime.
+# The base gun's Black Ops sprint set (re-gripped above) keeps the MP40's hands: the left hand ended up 4-7 inches off
+# most World at War guns, and up to 33 off the Magnum, Arisaka, Trench Gun and Wunderwaffe. So each gun gets three
+# animations made from its own idle pose (key 0) with tag_torso (both arms and TAG_WEAPON) moved as one piece, which
+# keeps the hands on the gun. Not checked against the PC engine's code (not found): the side offset is taken along
+# the view's left axis (Quake 3's viewaxis[1]) and the turn about the gun's origin (TAG_WEAPON). Read as right, or
+# turned about the eye, the rifles' port-arms poses (12 in to the side, 12-15 down, barrel 20 degrees up) leave the
+# screen; this way their stock sits low right with the barrel up across the view. The bob: Black Ops' own MP40 sprint
+# loop (sway +-8 degrees and 2.4 in once a cycle, bounce 0.7 in and 2 degrees once a step) for World at War's
+# (10, 10): BOB_REF. Camera space is x left, y up, z forward; 1 inch = 640 skeleton units (World at War iOS 100, x
+# SKEL_SCALE). The values come from work/waw_pc/weapons.json (export.py there, from the installed World at War PC;
+# WAW_PC=path): without it the re-gripped set stays.
+WAW_PC = os.environ.get('WAW_PC', os.path.join(ROOT, '..', '..', 'work', 'waw_pc', 'weapons.json'))
+PC = json.load(open(WAW_PC)) if os.path.exists(WAW_PC) else {}
+INCH = 640.0
+SPRINT_STATES = (gfx.djb2('sprint_in'), gfx.djb2('sprinting'), gfx.djb2('sprint_out'))
+BOB_REF = (8.0, 2.4, 0.7, 2.0)  # sway (degrees of yaw, inches), bounce (inches down, degrees of pitch) at bob 10
+KEY_MS = 1000.0 / 30
+
+
+def _axis_rot(axis, deg):
+    """rotation about camera-space axis 0 (x), 1 (y) or 2 (z) by deg"""
+    c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    return ([[1, 0, 0], [0, c, -s], [0, s, c]], [[c, 0, s], [0, 1, 0], [-s, 0, c]],
+            [[c, -s, 0], [s, c, 0], [0, 0, 1]])[axis]
+
+
+def _rmul(*rs):
+    out = rs[0]
+    for r in rs[1:]:
+        out = _mul((out, [0, 0, 0]), (r, [0, 0, 0]))[0]
+    return out
+
+
+def sprint_set(idle_body, skel, pc):
+    """(sprint_in, sprinting, sprint_out) animation bodies and lengths (1/4096 s) from the gun's idle pose and its
+    World at War PC values"""
+    by = {b.hash: b for b in skel.bones}
+    torso = by[gfx.djb2('tag_torso')]
+    world = _pose(idle_body, skel)
+    cam_inv = _inv(world[by[gfx.djb2('tag_camera')].index])
+    torso_cam = _mul(cam_inv, world[torso.index])                       # tag_torso in camera space
+    pivot = _mul(cam_inv, world[by[gfx.djb2('TAG_WEAPON')].index])[1]  # the gun's origin in camera space
+    to_parent = _mul(_inv(world[by[torso.parent].index]), _inv(cam_inv))  # camera space -> tag_torso's parent's
+    fwd, side, up = pc['vSprintOfs']  # (side along the engine's view axis 1, which points left, as in Quake 3)
+    ofs = [side * INCH, up * INCH, fwd * INCH]
+    pitch, yaw, roll = pc['vSprintRot']
+    h, v = [b / 10.0 for b in pc['vSprintBob']]
+
+    def pose(f, phase=None):
+        R = _rmul(_axis_rot(1, yaw * f), _axis_rot(0, pitch * f), _axis_rot(2, roll * f))
+        move = [c * f for c in ofs]
+        if phase is not None:  # sway once a cycle, bounce once a step (twice)
+            sway, step = math.sin(phase), (1 - math.cos(2 * phase)) / 2
+            R = _rmul(_axis_rot(1, BOB_REF[0] * h * sway), _axis_rot(0, BOB_REF[3] * v * step), R)
+            move = [move[0] + BOB_REF[1] * h * sway * INCH, move[1] - BOB_REF[2] * v * step * INCH, move[2]]
+        P = [pivot[i] + move[i] - sum(R[i][k] * pivot[k] for k in range(3)) for i in range(3)]  # turned about the gun
+        return _mul(to_parent, _mul((R, P), torso_cam))
+
+    a = iwanim.Anim(idle_body)
+    o0, n, flags = a.keys[0]
+    size = iwanim.keyframe_size(a.blob, o0)[0]
+    key0 = bytes(a.blob[o0:o0 + size])
+    smooth = lambda x: x * x * (3 - 2 * x)
+
+    def build(ms, at):
+        times = [i * KEY_MS for i in range(int(ms / KEY_MS))] + [ms]
+        b = iwanim.Anim(idle_body)
+        b.blob, b.nkeys = bytearray(), len(times)
+        b.keys = [(i * size, n, flags) for i in range(b.nkeys)]
+        for t in times:
+            k = bytearray(key0)
+            struct.pack_into('<i', k, 0, int(round(t * 4.096)))
+            b.blob += k
+        for ki, t in enumerate(times):
+            p, pos, q = _key_bones(b, ki)[torso.index]
+            assert pos is not None, 'idle without positions'
+            R, P = at(t / ms)
+            struct.pack_into('<3h', b.blob, p, *[max(-32768, min(32767, int(round(c)))) for c in P])
+            struct.pack_into('<4h', b.blob, p + 6, *_matq(R, q))
+        return b.write(), int(round(ms * 4.096))
+
+    return (build(pc['sprintInTime'], lambda x: pose(smooth(x))),
+            build(pc['sprintLoopTime'], lambda x: pose(1.0, 2 * math.pi * x)),
+            build(pc['sprintOutTime'], lambda x: pose(1.0 - smooth(x))))
 
 
 # ---- the view
@@ -1026,9 +1126,9 @@ class Converter:
                 struct.pack('<I', SOUND_GROUP) + b[35:39] + struct.pack('<I', nd))
         return self.add(self.sounds, gfx.H['CIwSoundSpec'], nh, spec)
 
-    def sequence(self, qh):
-        """World at War CSoundSequence -> Black Ops'"""
-        nh = new_hash('seq_%08x' % qh)
+    def sequence(self, qh, scale=1.0):
+        """World at War CSoundSequence -> Black Ops' (its delays x scale)"""
+        nh = new_hash('seq_%08x' % qh if scale == 1.0 else 'seq_%08x_%d' % (qh, round(scale * 1000)))
         if (C_SEQUENCE, nh) in self.sounds:
             return nh
         b = self.sfx.find(C_SEQUENCE, qh)[2]
@@ -1037,7 +1137,7 @@ class Converter:
         for i in range(n):
             cls, zero, v = struct.unpack_from('<3I', b, 5 + 12 * i)
             if cls == C_DELAY:
-                out += struct.pack('<3I', cls, zero, v)
+                out += struct.pack('<3I', cls, zero, int(round(v * scale)))
             else:
                 assert cls == C_PLAY, 'sequence command %08x' % cls
                 out += struct.pack('<4IB', cls, zero, self.sound(v), 0, 0)
@@ -1112,6 +1212,8 @@ class Converter:
         cfg = GUNS[gun]
         base = cfg['machines']
         g, up = self.guns[gun], self.guns[gun + '_upgrade']
+        pcg = PC.get(gun)
+        pcu = PC.get(gun + '_upgrade', pcg)
         bw, ba = gfx.Group(bo_weapons), gfx.Group(bo_arms)  # the map's
         target_arms = ba
         if cfg.get('source'):  # the base gun's records come from another map's groups
@@ -1164,6 +1266,19 @@ class Converter:
             if s['anim'] and ws and ws['anim']:
                 subst[s['hash']] = self.anim(self.arms, ws['anim'])
                 speeds[s['hash']] = ws['speed']
+        # World at War PC's reload and semi-automatic fire lengths: Black Ops state -> its length's scale
+        retime = {}
+        if pcg and not (cfg.get('looped') or cfg.get('flame') or cfg.get('projectile')):
+            want = {RELOAD_STATE[EMPTY]: pcg['iReloadEmptyTime'] or pcg['iReloadTime'],
+                    RELOAD_STATE[PARTIAL]: pcg['iReloadTime']}
+            if not g['x5e'] and not cfg.get('bolt') and cfg is not SHOTGUN:
+                want.update({BO_FIRE: pcg['iFireTime'], BO_AIM_FIRE: pcg['iFireTime']})
+            for h, ms in want.items():
+                ws = waw_state(h)
+                if h in speeds and ws and ws['anim'] and ms > 0:
+                    now_ms = anim_length(self.waw(ANIM, ws['anim']), waw=True) * 1000 / ws['speed']
+                    retime[h] = max(1 / RETIME_MAX, min(RETIME_MAX, ms / now_ms))
+                    speeds[h] = int(round(ws['speed'] / retime[h]))
         if cfg.get('looped') and LOOP_START in subst:
             first, then = wstates[LOOPED[LOOP_START]], wstates[LOOPED[LOOP]]
             subst[LOOP_START] = self.joined_anim(self.arms, first['anim'], then['anim'], first['speed'], then['speed'])
@@ -1199,6 +1314,17 @@ class Converter:
                     self.add(self.arms, ANIM, nh, line_up(self.arms[ANIM, subst[sh]], arms_skel, turn, move, ramp))
                     self.lengths[nh] = self.lengths[subst[sh]]
                 subst[sh] = nh
+        # the sprint: World at War PC's pose for this gun, made from its own idle (sprint_set)
+        idle_h = gfx.djb2('idle')
+        if gun in PC and idle_h in subst:
+            made = sprint_set(self.arms[ANIM, subst[idle_h]], arms_skel, PC[gun])
+            for s in states:
+                if s['hash'] in SPRINT_STATES and s['anim']:
+                    nh = new_hash('%s_sprint_%08x' % (gun, s['hash']))
+                    if (ANIM, nh) not in self.arms:
+                        body, self.lengths[nh] = made[SPRINT_STATES.index(s['hash'])]
+                        self.add(self.arms, ANIM, nh, body)
+                    subst[s['hash']] = nh
         # the base gun's own Black Ops animations (no other arms machine uses them), re-gripped for this gun; the ones
         # every gun shares (knife, grenade, perk drink) hide the gun and stay
         users = {}
@@ -1251,7 +1377,8 @@ class Converter:
                 src = (ws and gun_anim.get(ws['hash'])) or gun_anim[gfx.djb2('idle')]
                 gsubst[s['hash']] = self.anim(self.weapons, src, skel)
                 if ws:
-                    gspeeds[s['hash']] = ws['speed']  # in step with the arms
+                    k = retime.get({BO_GUN_FIRE: BO_FIRE, BO_GUN_AIM_FIRE: BO_AIM_FIRE}.get(s['hash'], s['hash']))
+                    gspeeds[s['hash']] = int(round(ws['speed'] / k)) if k else ws['speed']  # in step with the arms
                 if cfg.get('looped') and s['hash'] == LOOP_START:
                     first, then = LOOPED[LOOP_START], LOOPED[LOOP]
                     if gun_anim.get(first) and gun_anim.get(then):
@@ -1297,8 +1424,17 @@ class Converter:
                 w.set_u32('Upgrade', 0)
             w.set_str('m_armsAsm', arms_name)
             w.set_str('m_weaponAsm', weapon_name)
-            w.set_u32('m_clipSize', own['clip'])
-            w.set_u32('m_ammoSize', own['ammo'])
+            pcs = PC.get(gun if key == 'spec' else gun + '_upgrade')  # (no PC upgrade: iOS's clip and reserve)
+            w.set_u32('m_clipSize', pcs['iClipSize'] if pcs else own['clip'])
+            w.set_u32('m_ammoSize', pcs['iMaxAmmo'] if pcs else own['ammo'])
+            near, ratio, rng = own['x84'], own['x78'] / own['x84'] if own['x84'] else 1.0, None  # far = near x ratio
+            if own['x6c'] > 0:
+                rng = (own['x68'] / 10, (own['x68'] + (own['x84'] - own['x78']) * 4096 / own['x6c']) / 10)  # cm
+            if pcg and not (cfg.get('flame') or cfg.get('projectile')):  # (flame.cpp deals iOS's flame damage)
+                src = pcs or pcu
+                near = pcg['damage'] if key == 'spec' else max(src['damage'] / PAP_BODY, pcg['damage'])
+                ratio = src['minDamage'] / src['damage'] if src['damage'] else 1.0
+                rng = (src['fMaxDamageRange'] * 2.54, src['fMinDamageRange'] * 2.54)
             if cfg.get('damage', 'waw') == 'base' and cfg.get('ref') in self.guns:
                 # the copied spec's damage (Black Ops counts shotgun damage per pellet), scaled by World at War's
                 # damage over that of the gun it stands for (the double-barrel for the Olympia)
@@ -1316,7 +1452,6 @@ class Converter:
             if cfg.get('damage', 'waw') == 'waw':
                 # World at War's near damage on the body and limbs, times its head multiplier on the head (Black
                 # Ops' MP40 is World at War's: 100 / 400). Pack-a-Punch: x PAP_BODY / PAP_HEAD.
-                near = own['x84']
                 parts = dict(own['list_c8'])
                 mult = lambda i: parts.get(i, 4096) / 4096
                 kb, kh = (PAP_BODY, PAP_HEAD) if key == 'upgrade' else (1.0, 1.0)
@@ -1338,7 +1473,8 @@ class Converter:
             if w.field(F_RATE):
                 fire = next(s for s in self.arms_machine(own['name'].split(b'\0')[0].decode().lower())['states']
                             if s['hash'] == WAW_FIRE)
-                w.set_u32(F_RATE, int(round(RATE_REF[0] * RATE_REF[1] / fire['x14'])))
+                w.set_u32(F_RATE, int(round(RATE_REF_PC[0] * RATE_REF_PC[1] / (pcs or pcu)['iFireTime'])) if pcg and not cfg.get('flame') else
+                          int(round(RATE_REF[0] * RATE_REF[1] / fire['x14'])))
             if cfg.get('damage', 'waw') == 'waw' and not cfg.get('flame'):
                 # hip spread
                 acc = w.sub('m_accuracy')
@@ -1350,19 +1486,18 @@ class Converter:
             if not cfg.get('flame') and not cfg.get('projectile'):
                 # bullets: damage over range and through zombies
                 pk = PAP_BODY if key == 'upgrade' else 1.0
-                if own['x6c'] > 0 and own['x84'] > own['x78'] > 0:
+                if rng and 0 < ratio < 1:
                     if not w.field('m_falloff'):
                         f = olympia.field('m_falloff')
                         w.fields.append(lp.Field(f.cls, f.typ, f.a, f.fh, f.b, f.data))
                     fo = w.sub('m_falloff')
-                    fo.set_u32('m_startDistance', int(round(own['x68'] / 10)))
-                    fo.set_u32('m_endDistance', int(round((own['x68'] + (own['x84'] - own['x78']) * 4096 / own['x6c'])
-                                                          / 10)))
-                    fo.set_u32('m_damageMod', max(1, min(100, int(round(100 * own['x78'] / own['x84'])))))
+                    fo.set_u32('m_startDistance', int(round(rng[0])))
+                    fo.set_u32('m_endDistance', int(round(rng[1])))
+                    fo.set_u32('m_damageMod', max(1, min(100, int(round(100 * ratio)))))
                     w.set_sub('m_falloff', fo)
                 pen = w.sub('m_penetration')
                 pen.field('m_damageFalloff').data = struct.pack('<f', max(0.0, min(100.0, 100.0 * own['x64'] / 4096)))
-                pen.set_u32('m_damageMin', max(1, int(round(own['x78'] * pk))))
+                pen.set_u32('m_damageMin', max(1, int(round(near * ratio * pk))))
                 if own['x54']:
                     pen.set_u32('m_penetrationRating', own['x54'])
                 w.set_sub('m_penetration', pen)
@@ -1382,7 +1517,7 @@ class Converter:
             for field, which in (('reloadSoundSequence', EMPTY), ('reloadPartialSequence', PARTIAL)):
                 q = self.callback_param(wg, wstates[reloads[which]], 'playSoundSequence')
                 if q and w.field(field) and self.sfx.find(C_SEQUENCE, q):
-                    w.set_u32(field, self.sequence(q))
+                    w.set_u32(field, self.sequence(q, retime.get(RELOAD_STATE[which], 1.0)))
             if cfg.get('looped'):
                 # a shell going in (Black Ops plays it with each DoReload) and the close: World at War's loop and end
                 # states' sounds

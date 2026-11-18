@@ -1,4 +1,5 @@
-// Black Ops' dolphin dive: sprint, then crouch or prone, and the player dives forward to land prone.
+// Black Ops' dolphin dive: sprint, then crouch or prone, and the player dives forward to land prone. Also sets
+// World at War's sprint timing (dive.cpp: tune_sprint).
 #pragma once
 #include "common.h"
 

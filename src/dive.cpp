@@ -200,6 +200,53 @@ bool try_dive(GuestThread& t) {
     return true;
 }
 
+// ---- World at War's sprint (WaW PC: player_sprintTime 4 s, Stamin-Up doubles it) on Black Ops' stamina
+// (0x0262d94e): fatigue rises at SprintingRatePerSec while sprinting; past SprintingCapacity (100, perked 200) the
+// player is worn out and walks, and may sprint again once fatigue is back down to SprintingThreshold and sprint has
+// been let go. Black Ops' 80 brought a sprint back 0.2 s after running out with 0.7 s in it: short bursts and walks.
+// The touch move pad (0x026339e8) sprints past sprintUp (1.5 radii) and stops under sprintDown (1.2) or more than
+// SprintAngle off straight ahead, so a thumb easing back or sideways dropped the sprint.
+// The tweakables are objects (float value at +0x10) the game makes on first use; the stamina ones and SprintAngle
+// are kept in slots, sprintDown is looked up each time under the control layout's name for it (FN_LAYOUT_NAME).
+// debug.boz64.waw_sprint=0 keeps Black Ops' values.
+constexpr u32 TWEAKS = 0x028c6534;
+struct Tune { u32 slot; float value; };
+constexpr Tune TUNES[] = {
+    {0xa0, 25.0f},    // SprintingRatePerSec (30): 100 / 25 = 4 s
+    {0x98, 0.0f},     // SprintingThreshold (80): rested, at SprintingRecoveryRatePerSec 100, in 1 s
+    {0xc0, 25.0f},    // PerkedSprintingRatePerSec (30): 200 / 25 = 8 s
+    {0xb8, 0.0f},     // PerkedSprintingThreshold (200): rested, at 400, in 0.5 s
+    {0x370, 0.785f},  // SprintAngle (0.5 rad): 45 degrees
+};
+constexpr float SPRINT_DOWN = 0.9f;  // sprintDown (1.2): WalkFraction, where the pad slows to a walk anyway
+constexpr u32 FN_TWEAK = 0x025407c0 | 1;        // (name, default, 0, description): the float tweakable, made if new
+constexpr u32 FN_LAYOUT_NAME = 0x02669ae0 | 1;  // (name): its name in the current control layout
+constexpr u32 STR_SPRINT_DOWN = 0x02811e87, STR_SPRINT_DOWN_DEF = 0x02811dfa, STR_SPRINT_DESC = 0x02811e5a;
+constexpr Check SPRINT_CHECKS[] = {
+    {FN_TWEAK, 0x47ffe92d}, {FN_LAYOUT_NAME, 0x4607b5f8},
+    {0x0262d974, 0x1090f8d3}, {0x0262d95e, 0x10b0f8d3}, {0x02633a42, 0x3370f8d3},  // the reads of slots 0x90, 0xb0, 0x370
+};
+bool sprint_ok = false;
+u32 sprint_tuned = 0;  // the controller it was done for
+
+void tune_sprint(u32 ctl) {
+    if (!sprint_ok || sprint_tuned == ctl) return;
+    bool all = true;
+    for (const Tune& t : TUNES) {
+        u32 o = g::rd32(at(TWEAKS + t.slot));
+        if (valid(o)) g::wrf(o + 0x10, t.value);
+        else all = false;  // not made yet: again next update
+    }
+    if (!all) return;
+    u32 name = static_cast<u32>(call_game(FN_LAYOUT_NAME, {at(STR_SPRINT_DOWN)}));
+    u32 down = valid(name) ? static_cast<u32>(call_game(FN_TWEAK, {name, at(STR_SPRINT_DOWN_DEF), 0,
+                                                                   at(STR_SPRINT_DESC)})) : 0;
+    if (valid(down)) g::wrf(down + 0x10, SPRINT_DOWN);
+    sprint_tuned = ctl;  // shortcut: done once a game, not again if the control layout is changed mid-game
+    LOGI("dive: World at War's sprint (4 s, 8 s with Stamin-Up; again once rested)%s",
+         valid(down) ? "" : "; sprintDown not found");
+}
+
 // returns from the hooked function at once (it has not touched the stack yet): "bx lr"
 void return_now(GuestThread& t) {
     auto& r = t.regs();
@@ -211,6 +258,13 @@ void return_now(GuestThread& t) {
 
 void dive_set_image(u32 image_lo) {
     image = image_lo;
+    sprint_ok = prop_float("debug.boz64.waw_sprint", 1.0f) != 0.0f;
+    for (const Check& c : SPRINT_CHECKS) {
+        if (sprint_ok && g::rd32(at(c.fn & ~1u)) != c.word) {
+            LOGW("dive: unexpected code at 0x%08x; Black Ops' sprint is kept", c.fn & ~1u);
+            sprint_ok = false;
+        }
+    }
     for (const Check& c : CHECKS) {
         if (g::rd32(at(c.fn & ~1u)) != c.word) {
             LOGW("dive: unexpected code at 0x%08x; the dolphin dive is off", c.fn & ~1u);
@@ -253,7 +307,9 @@ bool dive_svc(GuestThread& t, u32 svc) {
 }
 
 void dive_on_player(u32 ctl) {
-    if (!enabled || !valid(ctl)) return;
+    if (!valid(ctl)) return;
+    tune_sprint(ctl);
+    if (!enabled) return;
     u64 now = now_ns();
     if (dive_ctl) {
         if (dive_ctl != ctl || now - dive_since > MAX_FLIGHT) {
